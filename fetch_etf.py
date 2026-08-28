@@ -19,15 +19,21 @@ def fetch_daily(secid):
     url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
            f"&ut=fa5fd1943c7b386f172d6893dbfba10b&fields1=f1,f2,f3"
            f"&fields2=f51,f52,f53,f54,f55&klt=101&fqt=1&beg={BEG}&end={END}")
+    import subprocess, time
+    UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     last = None
-    for attempt in range(4):
+    for attempt in range(6):
         try:
             out = subprocess.run(
-                ["curl", "-s", "-m", "30", "-A", "Mozilla/5.0", url],
+                ["curl", "-s", "-m", "30", "-A", UA,
+                 "-e", "https://quote.eastmoney.com/", url],
                 capture_output=True, text=True, check=True)
+            if not out.stdout.strip():
+                raise RuntimeError("空响应")
             j = json.loads(out.stdout)
             d = j.get("data")
-            if not d:
+            if not d or not d.get("klines"):
                 raise RuntimeError(f"{secid} 无数据: {j.get('msg')}")
             recs = []
             for line in d.get("klines", []):
@@ -42,6 +48,8 @@ def fetch_daily(secid):
         except Exception as e:
             last = e
             print(f"  retry {secid} attempt {attempt+1}: {e}")
+            if attempt < 5:
+                time.sleep(2 ** (attempt + 1))
     raise RuntimeError(f"{secid} 抓取失败: {last}")
 
 def main():
