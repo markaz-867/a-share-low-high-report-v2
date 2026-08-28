@@ -15,42 +15,51 @@ INDICES = [
 ]
 
 def fetch_daily(secid):
-    url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
-           f"&ut=fa5fd1943c7b386f172d6893dbfba10b&fields1=f1,f2,f3"
-           f"&fields2=f51,f52,f53,f54,f55&klt=101&fqt=1&beg={BEG}&end={END}")
+    base = ("https://{host}/api/qt/stock/kline/get?secid={secid}"
+            "&ut=fa5fd1943c7b386f172d6893dbfba10b&fields1=f1,f2,f3"
+            "&fields2=f51,f52,f53,f54,f55&klt=101&fqt=1&beg={beg}&end={end}")
+    # 多个 eastmoney 节点：GitHub 云端 IP 可能被主域风控，跨节点可绕开限流
+    HOSTS = [
+        "82.push2his.eastmoney.com",
+        "push2his.eastmoney.com",
+        "1.push2his.eastmoney.com",
+        "push2.eastmoney.com",
+    ]
     import subprocess, time
     UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     last = None
-    for attempt in range(6):
-        try:
-            out = subprocess.run(
-                ["curl", "-s", "-m", "30", "-A", UA,
-                 "-e", "https://quote.eastmoney.com/", url],
-                capture_output=True, text=True, check=True)
-            if not out.stdout.strip():
-                raise RuntimeError("空响应")
-            j = json.loads(out.stdout)
-            d = j.get("data")
-            if not d or not d.get("klines"):
-                raise RuntimeError(f"{secid} 无数据: {j.get('msg')}")
-            recs = []
-            for line in d.get("klines", []):
-                p = line.split(",")
-                recs.append({
-                    "date": p[0],
-                    "open": float(p[1]),
-                    "close": float(p[2]),
-                    "high": float(p[3]),
-                    "low": float(p[4]),
-                })
-            return recs
-        except Exception as e:
-            last = e
-            print(f"  retry {secid} attempt {attempt+1}: {e}")
-            if attempt < 5:
-                time.sleep(2 ** (attempt + 1))
-    raise RuntimeError(f"{secid} 抓取失败: {last}")
+    for host in HOSTS:
+        url = base.format(host=host, secid=secid, beg=BEG, end=END)
+        for attempt in range(3):
+            try:
+                out = subprocess.run(
+                    ["curl", "-s", "-m", "30", "-A", UA,
+                     "-e", "https://quote.eastmoney.com/", url],
+                    capture_output=True, text=True, check=True)
+                if not out.stdout.strip():
+                    raise RuntimeError("空响应")
+                j = json.loads(out.stdout)
+                d = j.get("data")
+                if not d or not d.get("klines"):
+                    raise RuntimeError(f"{secid} 无数据: {j.get('msg')}")
+                recs = []
+                for line in d.get("klines", []):
+                    p = line.split(",")
+                    recs.append({
+                        "date": p[0],
+                        "open": float(p[1]),
+                        "close": float(p[2]),
+                        "high": float(p[3]),
+                        "low": float(p[4]),
+                    })
+                return recs
+            except Exception as e:
+                last = e
+                print(f"  retry {host} {secid} attempt {attempt+1}: {e}")
+                if attempt < 2:
+                    time.sleep(3)
+    raise RuntimeError(f"{secid} 抓取失败(所有源): {last}")
 
 def primary_window(recs, anchor_key, extreme_val, side):
     """side='low' -> 围绕最低点向外扩，直到 close 突破 extreme_val*(1+ALPHA)
