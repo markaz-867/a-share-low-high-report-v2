@@ -25,10 +25,24 @@ jobs:
         run: pip install --upgrade pip openpyxl
 
       - name: Fetch index K-line & compute
-        run: python fetch_compute.py
+        run: |
+          for i in $(seq 1 5); do
+            if python fetch_compute.py; then
+              echo "fetch index ok"; exit 0
+            fi
+            echo "fetch_compute 第 $i 次失败，25s 后重试"; sleep 25
+          done
+          echo "fetch_compute 最终失败"; exit 1
 
       - name: Fetch ETF K-line
-        run: python fetch_etf.py
+        run: |
+          for i in $(seq 1 5); do
+            if python fetch_etf.py; then
+              echo "fetch ETF ok"; exit 0
+            fi
+            echo "fetch_etf 第 $i 次失败，25s 后重试"; sleep 25
+          done
+          echo "fetch_etf 最终失败"; exit 1
 
       - name: Build HTML / Excel
         run: python build_outputs.py
