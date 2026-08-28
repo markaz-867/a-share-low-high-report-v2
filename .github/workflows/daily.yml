@@ -21,6 +21,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install dependencies
+        run: pip install --upgrade pip openpyxl
+
       - name: Fetch index K-line & compute
         run: python fetch_compute.py
 
