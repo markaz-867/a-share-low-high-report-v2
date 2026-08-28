@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""抓取代表性 ETF 日K线（动态截止到今天），存 etf_data.json。"""
+import subprocess, json, os, datetime
+
+OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+TODAY = datetime.date.today()
+BEG, END = "20160101", TODAY.strftime("%Y%m%d")
+
+# code -> (secid, 名称)
+ETFS = {
+    "510050": ("1.510050", "上证50ETF"),
+    "510300": ("1.510300", "沪深300ETF"),
+    "159915": ("0.159915", "创业板ETF"),
+    "588000": ("1.588000", "科创50ETF"),
+}
+
+def fetch_daily(secid):
+    url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
+           f"&ut=fa5fd1943c7b386f172d6893dbfba10b&fields1=f1,f2,f3"
+           f"&fields2=f51,f52,f53,f54,f55&klt=101&fqt=1&beg={BEG}&end={END}")
+    last = None
+    for attempt in range(4):
+        try:
+            out = subprocess.run(
+                ["curl", "-s", "-m", "30", "-A", "Mozilla/5.0", url],
+                capture_output=True, text=True, check=True)
+            j = json.loads(out.stdout)
+            d = j.get("data")
+            if not d:
+                raise RuntimeError(f"{secid} 无数据: {j.get('msg')}")
+            recs = []
+            for line in d.get("klines", []):
+                p = line.split(",")
+                recs.append({
+                    "date": p[0],
+                    "close": float(p[2]),
+                    "high": float(p[3]),
+                    "low": float(p[4]),
+                })
+            return recs
+        except Exception as e:
+            last = e
+            print(f"  retry {secid} attempt {attempt+1}: {e}")
+    raise RuntimeError(f"{secid} 抓取失败: {last}")
+
+def main():
+    result = {}
+    index_map = {
+        "上证指数": ["510050", "510300"],
+        "创业板指": ["159915"],
+        "科创50":   ["588000"],
+    }
+    for code, (secid, name) in ETFS.items():
+        recs = fetch_daily(secid)
+        result[code] = {
+            "name": name, "secid": secid,
+            "series": [{"date": r["date"], "close": r["close"], "high": r["high"], "low": r["low"]} for r in recs]
+        }
+        print(f"{name}({code}): 抓取 {len(recs)} 条")
+    out = {"etfs": result, "index_map": index_map}
+    path = os.path.join(OUT_DIR, "etf_data.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    print("saved ->", path)
+
+if __name__ == "__main__":
+    main()
