@@ -1,0 +1,11 @@
+# 中间数据（每次运行由脚本重新生成，无需入库）
+results.json
+raw_data.json
+etf_data.json
+# 本地 Excel（Pages 只服务 HTML，xlsx 为本地交付物）
+*.xlsx
+# Python
+__pycache__/
+*.pyc
+# 历史中间产物（旧缓存 HTML，最终成品为 index_low_high_report.html / index.html）
+index_report_*.html
