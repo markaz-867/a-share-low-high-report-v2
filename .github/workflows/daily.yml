@@ -1,0 +1,42 @@
+name: Daily A-share Low/High Report
+
+on:
+  schedule:
+    # 北京时间 17:30（收盘后数据就绪），周一至周五。UTC = 北京时间 -8h
+    - cron: "30 9 * * 1-5"
+  workflow_dispatch: {}   # 允许手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch index K-line & compute
+        run: python fetch_compute.py
+
+      - name: Fetch ETF K-line
+        run: python fetch_etf.py
+
+      - name: Build HTML / Excel
+        run: python build_outputs.py
+
+      - name: Publish Pages artifact (index.html)
+        run: cp index_low_high_report.html index.html
+
+      - name: Commit & push updated report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index_low_high_report.html index.html
+          git diff --cached --quiet || git commit -m "chore: daily update $(date +%F)"
+          git push
