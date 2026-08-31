@@ -24,6 +24,10 @@ def fetch_daily(secid):
         "push2his.eastmoney.com",
         "1.push2his.eastmoney.com",
         "push2.eastmoney.com",
+        "28.push2his.eastmoney.com",
+        "7.push2his.eastmoney.com",
+        "48.push2his.eastmoney.com",
+        "91.push2his.eastmoney.com",
     ]
     import subprocess, time
     UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
