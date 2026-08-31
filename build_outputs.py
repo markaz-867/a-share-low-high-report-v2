@@ -462,16 +462,19 @@ def svg_chart(name):
     # trend line (index)
     svg.append(f'<polyline points="{pts}" fill="none" stroke="#89c4f4" stroke-width="1.4" stroke-linejoin="round"/>')
 
-    # annual low / high dots (interactive: hover -> highlight table row)
+    # annual low / high dots (click -> popup detail; 不绑 hover，避免光标掠过时自动跳转表格)
     safe_name = name.replace(" ", "")
     for y in years:
         v = info["years"][y]
         dd = datetime.datetime.strptime(v["annual_low_date"], "%Y-%m-%d").date()
         x, ypos = X(dd), Y(v["annual_low"])
-        svg.append(f'<circle cx="{x:.1f}" cy="{ypos:.1f}" r="4" fill="{LOW_COLOR}" stroke="#fff" stroke-width="1" style="cursor:pointer" onmouseenter="highlightRow(\'{safe_name}\', \'{y}\')" onmouseleave="clearRow(\'{safe_name}\')" onclick="showPopup(\'{safe_name}\', \'{y}\', \'low\')"><title>{v["annual_low_date"]} 年最低 {v["annual_low"]}</title></circle>')
+        # 小圆点半径仅 4px，太小不好点：外层再套一个透明可点击圆（与买/卖标记同一做法）
+        svg.append(f'<circle cx="{x:.1f}" cy="{ypos:.1f}" r="4" fill="{LOW_COLOR}" stroke="#fff" stroke-width="1"/>')
+        svg.append(f'<circle cx="{x:.1f}" cy="{ypos:.1f}" r="9" fill="transparent" stroke="none" pointer-events="all" style="cursor:pointer" onclick="showPopup(\'{safe_name}\', \'{y}\', \'low\')"><title>{v["annual_low_date"]} 年最低 {v["annual_low"]}（点击查看详情）</title></circle>')
         dd = datetime.datetime.strptime(v["annual_high_date"], "%Y-%m-%d").date()
         x, ypos = X(dd), Y(v["annual_high"])
-        svg.append(f'<circle cx="{x:.1f}" cy="{ypos:.1f}" r="4" fill="{HIGH_COLOR}" stroke="#fff" stroke-width="1" style="cursor:pointer" onmouseenter="highlightRow(\'{safe_name}\', \'{y}\')" onmouseleave="clearRow(\'{safe_name}\')" onclick="showPopup(\'{safe_name}\', \'{y}\', \'high\')"><title>{v["annual_high_date"]} 年最高 {v["annual_high"]}</title></circle>')
+        svg.append(f'<circle cx="{x:.1f}" cy="{ypos:.1f}" r="4" fill="{HIGH_COLOR}" stroke="#fff" stroke-width="1"/>')
+        svg.append(f'<circle cx="{x:.1f}" cy="{ypos:.1f}" r="9" fill="transparent" stroke="none" pointer-events="all" style="cursor:pointer" onclick="showPopup(\'{safe_name}\', \'{y}\', \'high\')"><title>{v["annual_high_date"]} 年最高 {v["annual_high"]}（点击查看详情）</title></circle>')
 
     # ---- buy / sell action markers (at band midpoints) ----
     for y in years:
@@ -549,7 +552,7 @@ def html_table(name):
         caveat = '<p class="caveat">⚠ 科创50 于 2020-07-22 正式发布，2019 年仅基点(1000)记录；2016–2018 尚未存在，无数据。</p>'
     return f"""<div class="card" id="card-{safe_name}">
 <h2>{name} <span class="code">({info['code']})</span></h2>
-<div class="legend"><span class="dot low"></span>低点区间&nbsp;&nbsp;<span class="dot high"></span>高点区间&nbsp;&nbsp;<span class="line" style="display:inline-block;width:16px;height:2px;background:#89c4f4;vertical-align:middle;margin:0 3px"></span>指数收盘价&nbsp;&nbsp;{etf_legend}&nbsp;&nbsp;<span style="color:{LOW_COLOR};font-weight:700">▲买</span>&nbsp;(低带中点)&nbsp;&nbsp;<span style="color:{HIGH_COLOR};font-weight:700">▼卖</span>&nbsp;(高带中点)&nbsp;&nbsp;<span class="anno">● = 年度极值点（悬停高亮表格 / 点击查看详情）</span><span class="anno" style="margin-left:14px">↔ 下方图表可左右滑动</span></div>
+<div class="legend"><span class="dot low"></span>低点区间&nbsp;&nbsp;<span class="dot high"></span>高点区间&nbsp;&nbsp;<span class="line" style="display:inline-block;width:16px;height:2px;background:#89c4f4;vertical-align:middle;margin:0 3px"></span>指数收盘价&nbsp;&nbsp;{etf_legend}&nbsp;&nbsp;<span style="color:{LOW_COLOR};font-weight:700">▲买</span>&nbsp;(低带中点)&nbsp;&nbsp;<span style="color:{HIGH_COLOR};font-weight:700">▼卖</span>&nbsp;(高带中点)&nbsp;&nbsp;<span class="anno">● = 年度极值点（点击查看详情）；▲买 / ▼卖 = 区间中点操作信号（点击查看详情）</span><span class="anno" style="margin-left:14px">↔ 下方图表可左右滑动</span></div>
 <div class="chart-scroll">
 {svg_chart(name)}
 </div>
