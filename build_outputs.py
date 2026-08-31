@@ -6,7 +6,13 @@ import json, os, datetime
 HERE = os.path.dirname(os.path.abspath(__file__))
 RES = json.load(open(os.path.join(HERE, "results.json"), encoding="utf-8"))
 RAW = json.load(open(os.path.join(HERE, "raw_data.json"), encoding="utf-8"))
-ETF = json.load(open(os.path.join(HERE, "etf_data.json"), encoding="utf-8"))
+# ETF 数据为可选（仅用于叠加图）：抓取被限流时允许缺失，报表照常生成
+_etf_path = os.path.join(HERE, "etf_data.json")
+try:
+    ETF = json.load(open(_etf_path, encoding="utf-8"))
+except Exception as _e:
+    print(f"! 未读到 etf_data.json（{_e}），本次报表跳过 ETF 叠加图")
+    ETF = {"etfs": {}, "index_map": {}}
 ETF_LINE_COLORS = ["#ffb74d", "#ba68c8", "#4dd0e1", "#aed581"]
 GEN_DATE = datetime.date.today().strftime("%Y-%m-%d")
 ALPHA = RES["meta"]["alpha"]
@@ -428,7 +434,9 @@ def svg_chart(name):
     codes = ETF.get("index_map", {}).get(name, [])
     etf_series = []
     for code in codes:
-        s = ETF["etfs"][code]["series"]
+        s = ETF.get("etfs", {}).get(code, {}).get("series", [])
+        if not s:
+            continue
         bd = {datetime.datetime.strptime(r["date"], "%Y-%m-%d").date(): r["close"] for r in s}
         etf_series.append((code, ETF["etfs"][code]["name"], bd))
     if etf_series:
@@ -522,6 +530,8 @@ def html_table(name):
     if codes:
         parts = []
         for i, code in enumerate(codes):
+            if code not in ETF.get("etfs", {}):
+                continue
             col = ETF_LINE_COLORS[i % len(ETF_LINE_COLORS)]
             nm = ETF["etfs"][code]["name"]
             parts.append(f'<span class="line" style="display:inline-block;width:16px;height:0;border-top:2px dashed {col};vertical-align:middle;margin:0 3px"></span>{nm}({code})')
@@ -673,10 +683,12 @@ def overlay_chart(name):
     idx_series = RAW[name]["series"]
     idx_dates = [datetime.datetime.strptime(r["date"], "%Y-%m-%d").date() for r in idx_series]
     idx_by_date = {d: c for d, c in zip(idx_dates, (x["close"] for x in idx_series))}
-    codes = ETF["index_map"].get(name, [])
+    codes = ETF.get("index_map", {}).get(name, [])
     etf_lines = []
     for code in codes:
-        s = ETF["etfs"][code]["series"]
+        s = ETF.get("etfs", {}).get(code, {}).get("series", [])
+        if not s:
+            continue
         bd = {datetime.datetime.strptime(r["date"], "%Y-%m-%d").date(): r["close"] for r in s}
         etf_lines.append((code, ETF["etfs"][code]["name"], bd))
     # 共同交易日（指数与所有 ETF 的交集）
@@ -688,8 +700,10 @@ def overlay_chart(name):
     xmax = max(xs) if xs else 1
     idx_norm = [idx_by_date[d] / base_idx * 100 for d in common]
     etf_norm = [(code, nm, [bd[d] / b0 * 100 for d in common]) for (code, nm, bd), b0 in zip(etf_lines, base_etf)]
-    pmin = min(min(idx_norm), min(min(e[2]) for e in etf_norm))
-    pmax = max(max(idx_norm), max(max(e[2]) for e in etf_norm))
+    # ETF 数据缺失时（抓取被限流），退化为纯指数走势图
+    etf_vals = [v for e in etf_norm for v in e[2]]
+    pmin = min([min(idx_norm)] + etf_vals)
+    pmax = max([max(idx_norm)] + etf_vals)
     pad = (pmax - pmin) * 0.08
     pLo, pHi = pmin - pad, pmax + pad
     W, H, left, right, top, bottom = 940, 360, 56, 16, 26, 58
