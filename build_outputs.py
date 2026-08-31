@@ -482,16 +482,24 @@ def svg_chart(name):
         de = datetime.datetime.strptime(v["low_window_end"], "%Y-%m-%d").date()
         md = ds + (de - ds) // 2
         xb, yb = X(md), Y(lm)
+        # 用透明圆形覆盖层把买/卖标记做成可点击区域，同时拦截底层年度极值点的 onmouseenter，
+        # 避免光标移到标记上时自动跳转到下方表格；仅 click 触发弹窗。
+        svg.append(f'<g class="marker-buy">')
         svg.append(f'<polygon points="{xb:.1f},{yb-6:.1f} {xb-5:.1f},{yb+4:.1f} {xb+5:.1f},{yb+4:.1f}" fill="{LOW_COLOR}" stroke="#fff" stroke-width="0.8"/>')
         svg.append(f'<text x="{xb:.1f}" y="{yb-10:.1f}" fill="{LOW_COLOR}" font-size="10" font-weight="700" text-anchor="middle">买</text>')
+        svg.append(f'<circle cx="{xb:.1f}" cy="{yb:.1f}" r="10" fill="transparent" stroke="none" pointer-events="all" style="cursor:pointer" onclick="showPopup(\'{safe_name}\', \'{y}\', \'low\')"><title>{y}年低点区间买入信号（点击查看详情）</title></circle>')
+        svg.append(f'</g>')
         # high band midpoint -> 卖 (red down-triangle)
         hm = (v["high_band_low"] + v["high_band_high"]) / 2
         ds = datetime.datetime.strptime(v["high_window_start"], "%Y-%m-%d").date()
         de = datetime.datetime.strptime(v["high_window_end"], "%Y-%m-%d").date()
         md = ds + (de - ds) // 2
         xs, ys = X(md), Y(hm)
+        svg.append(f'<g class="marker-sell">')
         svg.append(f'<polygon points="{xs:.1f},{ys+6:.1f} {xs-5:.1f},{ys-4:.1f} {xs+5:.1f},{ys-4:.1f}" fill="{HIGH_COLOR}" stroke="#fff" stroke-width="0.8"/>')
         svg.append(f'<text x="{xs:.1f}" y="{ys+18:.1f}" fill="{HIGH_COLOR}" font-size="10" font-weight="700" text-anchor="middle">卖</text>')
+        svg.append(f'<circle cx="{xs:.1f}" cy="{ys:.1f}" r="10" fill="transparent" stroke="none" pointer-events="all" style="cursor:pointer" onclick="showPopup(\'{safe_name}\', \'{y}\', \'high\')"><title>{y}年高点区间卖出信号（点击查看详情）</title></circle>')
+        svg.append(f'</g>')
 
     # ---- 最新交易日（今日）标记 ----
     if dates:
