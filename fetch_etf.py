@@ -24,6 +24,10 @@ def fetch_daily(secid):
         "push2his.eastmoney.com",
         "1.push2his.eastmoney.com",
         "push2.eastmoney.com",
+        "28.push2his.eastmoney.com",
+        "7.push2his.eastmoney.com",
+        "48.push2his.eastmoney.com",
+        "91.push2his.eastmoney.com",
     ]
     import subprocess, time
     UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -67,18 +71,29 @@ def main():
         "创业板指": ["159915"],
         "科创50":   ["588000"],
     }
+    failed = []
     for code, (secid, name) in ETFS.items():
-        recs = fetch_daily(secid)
+        try:
+            recs = fetch_daily(secid)
+        except Exception as e:
+            # ETF 数据仅用于叠加图，属可选数据：单只失败只跳过，不阻断整条流水线
+            print(f"! {name}({code}) 抓取失败，已跳过: {e}")
+            failed.append(code)
+            continue
         result[code] = {
             "name": name, "secid": secid,
             "series": [{"date": r["date"], "close": r["close"], "high": r["high"], "low": r["low"]} for r in recs]
         }
         print(f"{name}({code}): 抓取 {len(recs)} 条")
+    # 只保留抓取成功的标的，避免生成器引用空数据
+    index_map = {k: [c for c in v if c in result] for k, v in index_map.items()}
+    index_map = {k: v for k, v in index_map.items() if v}
     out = {"etfs": result, "index_map": index_map}
     path = os.path.join(OUT_DIR, "etf_data.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
-    print("saved ->", path)
+    print(f"saved -> {path} (成功 {len(result)}/{len(ETFS)} 只"
+          + (f", 跳过 {','.join(failed)}" if failed else "") + ")")
 
 if __name__ == "__main__":
     main()
