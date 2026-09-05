@@ -798,8 +798,6 @@ td.band{{color:#cfe0f2}}
 td.pct{{color:#a8c5e2}}
 td.key{{background:rgba(255,193,7,0.12);color:#ffd54f;font-weight:600}}
 tbody tr:hover{{background:#14304d}}
-tbody tr.hl{{background:#1f4e79 !important}}
-tbody tr.hl td.key{{background:rgba(255,193,7,0.22)}}
 .caveat{{color:#ffcf6b;font-size:12px;margin-top:10px}}
 footer{{margin-top:30px;color:#6f8bab;font-size:12px;border-top:1px solid #1c3a5e;padding-top:14px}}
 footer b{{color:#ff8a8a}}
@@ -888,20 +886,6 @@ footer b{{color:#ff8a8a}}
 </div>
 <script>
 const INDEX_DATA = {json.dumps(popup_data, ensure_ascii=False)};
-function highlightRow(name, year){{
-  var card = document.getElementById('card-'+name);
-  if (!card) return;
-  card.querySelectorAll('tbody tr').forEach(function(r){{ r.classList.remove('hl'); }});
-  var row = document.getElementById('row-'+name+'-'+year);
-  if (row){{
-    row.classList.add('hl');
-    row.scrollIntoView({{behavior:'smooth', block:'nearest'}});
-  }}
-}}
-function clearRow(name){{
-  var card = document.getElementById('card-'+name);
-  if (card) card.querySelectorAll('tbody tr.hl').forEach(function(r){{ r.classList.remove('hl'); }});
-}}
 function showPopup(name, year, type){{
   var d = INDEX_DATA[name] && INDEX_DATA[name][year];
   if (!d) return;
