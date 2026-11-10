@@ -20,7 +20,14 @@ END_DATE = RES["meta"].get("end", datetime.date.today().strftime("%Y%m%d"))
 GEN_DATE = RES["meta"].get("gen_date", GEN_DATE)
 END_DISP = f"{END_DATE[:4]}-{END_DATE[4:6]}-{END_DATE[6:]}" if len(END_DATE) == 8 else END_DATE
 
-INDEX_ORDER = ["上证指数", "创业板指", "科创50"]
+SPOT_ORDER = ["上证指数", "创业板指", "科创50"]
+FUTURES_ORDER = ["IC主力连续", "IM主力连续"]
+# 期货为可选数据：抓取失败时自动从报表中隐去，不影响其余品种
+INDEX_ORDER = SPOT_ORDER + [n for n in FUTURES_ORDER if n in RES["indices"]]
+FUTURES_LABEL = {"IC主力连续": "IC 中证500股指期货",
+                 "IM主力连续": "IM 中证1000股指期货"}
+FUTURES_START = {n: RES["indices"][n].get("data_start", "—") for n in INDEX_ORDER
+                 if RES["indices"][n].get("kind") == "futures"}
 
 # ---------------- 低买高卖策略回测 ----------------
 FEE = 0.003  # 每轮往返费用率（ETF 管理费+双边滑点/佣金近似）
@@ -40,7 +47,8 @@ ETF_MAP = {
 
 def compute_strategy():
     result = {"etfs": ETF_MAP, "indices": {}}
-    for name in INDEX_ORDER:
+    # 策略回测依赖代表 ETF，仅对三只现货指数有效；期货无对应 ETF，不纳入
+    for name in SPOT_ORDER:
         years = sorted(RES["indices"][name]["years"])
         trades = []
         for i, y in enumerate(years):
@@ -82,10 +90,11 @@ def compute_strategy():
             "avg_ext": round(avg_ext, 2), "avg_mid": round(avg_mid, 2),
             "avg_ext_net": round(avg_ext_net, 2), "avg_mid_net": round(avg_mid_net, 2),
         }
-    ce = sum(result["indices"][n]["avg_ext"] for n in INDEX_ORDER) / 3
-    cm = sum(result["indices"][n]["avg_mid"] for n in INDEX_ORDER) / 3
-    cen = sum(result["indices"][n]["avg_ext_net"] for n in INDEX_ORDER) / 3
-    cmn = sum(result["indices"][n]["avg_mid_net"] for n in INDEX_ORDER) / 3
+    _ns = len(SPOT_ORDER)
+    ce = sum(result["indices"][n]["avg_ext"] for n in SPOT_ORDER) / _ns
+    cm = sum(result["indices"][n]["avg_mid"] for n in SPOT_ORDER) / _ns
+    cen = sum(result["indices"][n]["avg_ext_net"] for n in SPOT_ORDER) / _ns
+    cmn = sum(result["indices"][n]["avg_mid_net"] for n in SPOT_ORDER) / _ns
     result["comprehensive"] = {
         "avg_ext": round(ce, 2), "avg_mid": round(cm, 2),
         "avg_ext_net": round(cen, 2), "avg_mid_net": round(cmn, 2),
@@ -128,12 +137,13 @@ def style_header(ws, row, ncol):
 ws0 = wb.active
 ws0.title = "说明"
 notes = [
-    ("A股三大指数 逐年低点/高点区间报表", title_font),
+    ("A股三大指数 + IC/IM 股指期货 逐年低点/高点区间报表", title_font),
     (f"生成日期：{GEN_DATE}", None),
     ("", None),
-    ("数据来源：东方财富行情接口（日K线，前复权）", None),
+    ("数据来源：指数—东方财富日K线(前复权)，失败回退新浪；IC/IM—新浪期货主力连续日K", None),
     ("覆盖区间：2016-01-01 至 " + END_DISP + "（动态截止到最新交易日）", None),
-    ("指数：上证指数(000001)、创业板指(399006)、科创50(000688)", None),
+    ("排列方式：所有年份表按最新年份在前倒序排列；趋势图 X 轴仍按时间正序（左→右）", None),
+    ("品种：" + "、".join(f"{n}({RES['indices'][n]['code']})" for n in INDEX_ORDER), None),
     ("", None),
     ("区间定义（与确认方案一致）：", Font(bold=True)),
     ("1) 年度最低点 = 全年每日最低价的最小值；年度最高点 = 全年每日最高价的最大值。", None),
@@ -146,6 +156,9 @@ notes = [
     ("· 科创50 指数于 2020-07-22 正式发布，2019 年仅有基点(1000)记录，故 2019 行", None),
     ("  仅显示基点，不代表真实交易区间；2016-2018 该指数尚未存在，无数据。", None),
     ("· 部分年份的高/低点为主板单日尖峰（如 2024-10-08），故区间仅 1 个交易日。", None),
+    ("· IC/IM 为「主力连续」合约拼接序列：换月处存在跳空，非连续可比现货价格；", None),
+    ("  IM 于 2022-07-22 上市、IC 数据自 2017-01-17 起，早年无数据。年度高低点可能受跳空影响。", None),
+    ("· 期货含杠杆与升贴水，点位不可与现货指数直接比较；期货不参与 ETF 对照与策略回测。", None),
     ("", None),
     ("免责声明：本报表仅基于公开行情数据的量化整理，不构成任何投资建议。", Font(bold=True, color="B00020")),
 ]
@@ -169,7 +182,7 @@ for name in INDEX_ORDER:
     ws.append([])
     ws.append(COLS)
     style_header(ws, 3, len(COLS))
-    for y in sorted(info["years"]):
+    for y in sorted(info["years"], reverse=True):   # 最新年份在前
         v = info["years"][y]
         lp, hp, bp = band_pcts(v)
         ws.append([
@@ -195,14 +208,14 @@ for name in INDEX_ORDER:
 
 # 汇总 sheet
 ws_all = wb.create_sheet("汇总对比")
-ws_all.cell(row=1, column=1, value="三指数逐年低/高点对比（单位：点）").font = title_font
+ws_all.cell(row=1, column=1, value="各品种逐年低/高点对比（单位：点）").font = title_font
 hdr = ["年份"]
 for name in INDEX_ORDER:
     hdr += [f"{name}年最低", f"{name}年最高"]
 ws_all.append([])
 ws_all.append(hdr)
 style_header(ws_all, 3, len(hdr))
-years_all = sorted({y for name in INDEX_ORDER for y in RES["indices"][name]["years"]})
+years_all = sorted({y for name in INDEX_ORDER for y in RES["indices"][name]["years"]}, reverse=True)
 for y in years_all:
     row = [y]
     for name in INDEX_ORDER:
@@ -231,7 +244,7 @@ def add_strategy_sheet():
         cell = ws.cell(row=r, column=c, value=h); cell.fill = hdr_fill; cell.font = hdr_font
         cell.alignment = Alignment(horizontal="center"); cell.border = border
     r += 1
-    for name in INDEX_ORDER:
+    for name in SPOT_ORDER:
         etfs = STRAT["etfs"][name]
         for j, e in enumerate(etfs):
             vals = [name if j == 0 else "", e["etf"], e["etf_name"], e["note"]]
@@ -267,9 +280,9 @@ def add_strategy_sheet():
         cell = ws.cell(row=r, column=c, value=h); cell.fill = hdr_fill; cell.font = hdr_font
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True); cell.border = border
     r += 1
-    for name in INDEX_ORDER:
+    for name in SPOT_ORDER:
         idx = STRAT["indices"][name]
-        for t in idx["trades"]:
+        for t in reversed(idx["trades"]):   # 最新一轮（持仓）在最前
             row = [
                 name, t["buy_year"], t["buy_date"], t["buy_price_ext"], t["buy_band_mid"],
                 t["sell_year"], t["sell_date"],
@@ -520,7 +533,7 @@ def html_table(name):
     info = RES["indices"][name]
     safe_name = name.replace(" ", "")
     rows = []
-    for y in sorted(info["years"]):
+    for y in sorted(info["years"], reverse=True):   # 最新年份在前
         v = info["years"][y]
         lp, hp, bp = band_pcts(v)
         rows.append(f"""<tr id="row-{safe_name}-{y}">
@@ -550,9 +563,13 @@ def html_table(name):
     caveat = ""
     if name == "科创50":
         caveat = '<p class="caveat">⚠ 科创50 于 2020-07-22 正式发布，2019 年仅基点(1000)记录；2016–2018 尚未存在，无数据。</p>'
+    elif name in FUTURES_LABEL:
+        caveat = (f'<p class="caveat">⚠ {FUTURES_LABEL[name]}为<b>主力连续合约</b>拼接序列，'
+                  f'数据自 {FUTURES_START.get(name, "—")} 起；换月处存在价格跳空，并非连续可比的现货价格，'
+                  f'年度高低点与 ±5% 区间可能受跳空影响。期货含杠杆与升贴水，点位请勿与现货指数直接比较。</p>')
     return f"""<div class="card" id="card-{safe_name}">
 <h2>{name} <span class="code">({info['code']})</span></h2>
-<div class="legend"><span class="dot low"></span>低点区间&nbsp;&nbsp;<span class="dot high"></span>高点区间&nbsp;&nbsp;<span class="line" style="display:inline-block;width:16px;height:2px;background:#89c4f4;vertical-align:middle;margin:0 3px"></span>指数收盘价&nbsp;&nbsp;{etf_legend}&nbsp;&nbsp;<span style="color:{LOW_COLOR};font-weight:700">▲买</span>&nbsp;(低带中点)&nbsp;&nbsp;<span style="color:{HIGH_COLOR};font-weight:700">▼卖</span>&nbsp;(高带中点)&nbsp;&nbsp;<span class="anno">● = 年度极值点（点击查看详情）；▲买 / ▼卖 = 区间中点操作信号（点击查看详情）</span><span class="anno" style="margin-left:14px">↔ 下方图表可左右滑动</span></div>
+<div class="legend"><span class="dot low"></span>低点区间&nbsp;&nbsp;<span class="dot high"></span>高点区间&nbsp;&nbsp;<span class="line" style="display:inline-block;width:16px;height:2px;background:#89c4f4;vertical-align:middle;margin:0 3px"></span>收盘价&nbsp;&nbsp;{etf_legend}&nbsp;&nbsp;<span style="color:{LOW_COLOR};font-weight:700">▲买</span>&nbsp;(低带中点)&nbsp;&nbsp;<span style="color:{HIGH_COLOR};font-weight:700">▼卖</span>&nbsp;(高带中点)&nbsp;&nbsp;<span class="anno">● = 年度极值点（点击查看详情）；▲买 / ▼卖 = 区间中点操作信号（点击查看详情）</span><span class="anno" style="margin-left:14px">↔ 下方图表可左右滑动</span></div>
 <div class="chart-scroll">
 {svg_chart(name)}
 </div>
@@ -603,7 +620,7 @@ live_panel = live_panel_html()
 def strategy_html():
     comp = STRAT["comprehensive"]
     etf_rows = ""
-    for name in INDEX_ORDER:
+    for name in SPOT_ORDER:
         for j, e in enumerate(STRAT["etfs"][name]):
             etf_rows += (f"<tr><td class='l'>{name if j == 0 else ''}</td><td>{e['etf']}</td>"
                          f"<td class='l'>{e['etf_name']}</td>"
@@ -619,7 +636,7 @@ def strategy_html():
                  f"</div>")
 
     cards_html = []
-    for name in INDEX_ORDER:
+    for name in SPOT_ORDER:
         idx = STRAT["indices"][name]
         mini = (f"<div class='sum-box'>"
                 f"<div class='sum-item'><div class='k'>{name} 平均(极值)</div><div class='v green'>{idx['avg_ext']}%</div></div>"
@@ -628,7 +645,7 @@ def strategy_html():
                 f"<div class='sum-item'><div class='k'>可交易笔数</div><div class='v grey'>{idx['n_closed']}</div></div>"
                 f"</div>")
         tr_rows = []
-        for t in idx["trades"]:
+        for t in reversed(idx["trades"]):
             if t["open"]:
                 tr_rows.append(
                     f"<tr><td>{t['buy_year']}</td><td>{t['buy_date']}</td><td>{t['buy_price_ext']}</td><td>{t['buy_band_mid']}</td>"
@@ -743,6 +760,28 @@ def overlay_chart(name):
         col = ETF_LINE_COLORS[i % len(ETF_LINE_COLORS)]
         pts = " ".join(f"{X(xd):.1f},{Y(p):.1f}" for xd, p in zip(xs, vals))
         svg.append(f'<polyline points="{pts}" fill="none" stroke="{col}" stroke-width="1.6" stroke-dasharray="5 3" stroke-linejoin="round" opacity="0.95"/>')
+    # ---- 买/卖信号标记（与上方主图同一口径：年度低/高带中点，归一化到本图 Y 轴）----
+    _info = RES["indices"][name]
+    _safe = name.replace(" ", "")
+    for _y in sorted(_info["years"]):
+        _v = _info["years"][_y]
+        for _side, _col, _lbl in (("low", LOW_COLOR, "买"), ("high", HIGH_COLOR, "卖")):
+            _ds = datetime.datetime.strptime(_v[_side + "_window_start"], "%Y-%m-%d").date()
+            _de = datetime.datetime.strptime(_v[_side + "_window_end"], "%Y-%m-%d").date()
+            _md = _ds + (_de - _ds) // 2
+            if _md < start or _md > common[-1]:
+                continue
+            _pm = (_v[_side + "_band_low"] + _v[_side + "_band_high"]) / 2
+            _xn = X((_md - start).days)
+            _yn = Y(_pm / base_idx * 100)
+            if _side == "low":
+                _poly = f"{_xn:.1f},{_yn-6:.1f} {_xn-5:.1f},{_yn+4:.1f} {_xn+5:.1f},{_yn+4:.1f}"
+            else:
+                _poly = f"{_xn:.1f},{_yn+6:.1f} {_xn-5:.1f},{_yn-4:.1f} {_xn+5:.1f},{_yn-4:.1f}"
+            svg.append(f'<polygon points="{_poly}" fill="{_col}" stroke="#fff" stroke-width="0.8"/>')
+            svg.append(f'<text x="{_xn:.1f}" y="{_yn-10:.1f}" fill="{_col}" font-size="9" font-weight="700" text-anchor="middle">{_lbl}</text>')
+            svg.append(f'<circle cx="{_xn:.1f}" cy="{_yn:.1f}" r="9" fill="transparent" stroke="none" pointer-events="all" style="cursor:pointer" onclick="showPopup(\'{_safe}\', \'{_y}\', \'{_side}\')"><title>{_y}年{_lbl}点区间信号（点击查看详情）</title></circle>')
+
     lx = left + 6
     svg.append(f'<text x="{lx}" y="{top+12}" fill="#5fa8ff" font-size="11" font-weight="600">● 指数</text>')
     ox = lx + 52
@@ -758,13 +797,15 @@ OVERLAY_CAVEAT = {
     "上证指数": "上证综指无对应大 ETF，叠加的 510050(上证50)/510300(沪深300) 跟踪的是不同指数，二者与综指分叉属正常风格偏离，非跟踪误差。",
     "创业板指": "159915 直接跟踪创业板指，理论应基本重合；局部微小偏离来自 ETF 申赎摩擦与现金拖累。",
     "科创50":   "588000 直接跟踪科创50，理论应基本重合；ETF 首交易日为 2020-11-16，故重合图自该日起。" ,
+    "IC主力连续": "IC 为股指期货主力连续，无可直接对应的可交易 ETF；此图仅展示其归一化走势与年度低/高带买卖信号。换月拼接跳空会影响形态。" ,
+    "IM主力连续": "IM 为股指期货主力连续，无可直接对应的可交易 ETF；此图仅展示其归一化走势与年度低/高带买卖信号。数据自 2022-07-22 上市起。" ,
 }
 overlay_section = (
     "<div class='overlay-sec'>"
-    "<h2>指数与 ETF 走势重合图（归一化对比）</h2>"
-    "<div class='sub'>同一时间轴、各自以起点=100 归一化，直接看 ETF 是否跟住指数；上证叠加 510050 / 510300 两个实操代理。重合度越高，代理越可靠。</div>"
+    "<h2>归一化走势与买卖信号（指数 / 期货 vs ETF）</h2>"
+    "<div class='sub'>同一时间轴、各自以起点=100 归一化，直接看 ETF 是否跟住指数；并叠加 <span style='color:#1EC98B;font-weight:700'>▲买(低带中点)</span> / <span style='color:#FF5B5B;font-weight:700'>▼卖(高带中点)</span> 信号，点击可查看详情。IC/IM 无对应 ETF，仅展示主力连续自身走势与信号。</div>"
     + "".join(
-        f"<div class='card'><h2>{name} <span class='code'>vs ETF</span></h2>{overlay_chart(name)}"
+        f"<div class='card'><h2>{name} <span class='code'>vs ETF / 买卖信号</span></h2>{overlay_chart(name)}"
         f"<p class='caveat'>{OVERLAY_CAVEAT.get(name, '')}</p></div>"
         for name in INDEX_ORDER)
     + "</div>")
@@ -772,7 +813,7 @@ overlay_section = (
 html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>A股三大指数 逐年低点/高点区间报表</title>
+<title>A股三大指数 + IC/IM 股指期货 逐年低点/高点区间报表</title>
 <style>
 *{{box-sizing:border-box}}
 body{{margin:0;background:#0a1929;color:#e6f0fa;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5}}
@@ -857,9 +898,10 @@ footer b{{color:#ff8a8a}}
 </style></head>
 <body><div class="wrap">
 <header>
-<h1>A股三大指数 · 逐年低点/高点区间报表</h1>
-<div class="sub">上证指数 · 创业板指 · 科创50 ｜ 2016 至 {END_DISP}（动态更新）</div>
-<div class="meta">生成日期 {GEN_DATE} ｜ 数据源：东方财富日K线(前复权) ｜ 区间定义：±{ALPHA:.0%} 容忍带主区间法</div>
+<h1>A股三大指数 + IC/IM 股指期货 · 逐年低点/高点区间报表</h1>
+<div class="sub">{" · ".join(INDEX_ORDER)} ｜ {END_DISP} 回溯至 2016（动态更新；期货自各自上市日起）</div>
+<div class="meta">排列：所有年份表按「当前年 → 过去」倒序；趋势图 X 轴仍按时间正序（左→右），打开时自动定位到最新交易日</div>
+<div class="meta">生成日期 {GEN_DATE} ｜ 数据源：指数=东方财富日K(前复权)/新浪备用，IC/IM=新浪期货主力连续 ｜ 区间定义：±{ALPHA:.0%} 容忍带主区间法</div>
 </header>
 {live_panel}
 <div class="cards">{cards}</div>
@@ -881,6 +923,7 @@ footer b{{color:#ff8a8a}}
 <footer>
 <p><b>方法说明：</b>年度最低/最高 = 全年每日最低/最高价极值；低点区间 = 以年最低点交易日为锚向两侧扩展至收盘价突破 年最低×1.05 的连续时段，取起止日期与期间价格带；高点区间对称(阈值 年最高×0.95)。仅取主区间。</p>
 <p><b>价格带浮动%：</b>低点带浮动%=(低点带上沿−下沿)/下沿；高点带浮动%=(高点带上沿−下沿)/下沿；低→高上涨%区间=(高点带中点−低点带中点)/低点带中点。</p>
+<p><b>期货口径提示：</b>IC/IM 采用新浪「主力连续」合约日K，由各月主力合约首尾拼接而成，换月当日的价格跳空属于拼接特征、非真实涨跌；IM 上市于 2022-07-22，IC 数据自 2017-01-17 起，此前年份空缺。期货为保证金交易且存在升贴水，其点位与现货指数不可直接类比；本报表对期货沿用同一 ±5% 主区间法，结果仅作形态观察，不适合直接作为交易依据。</p>
 <p><b>免责声明：</b>本报表仅基于公开行情数据的量化整理，不构成任何投资建议。市场有风险，决策需谨慎。</p>
 </footer>
 </div>
@@ -909,6 +952,16 @@ function hidePopup(){{
   document.getElementById('popup-overlay').classList.remove('active');
 }}
 document.addEventListener('keydown', function(e){{ if (e.key === 'Escape') hidePopup(); }});
+// 宽幅趋势图默认停在最新交易日；年份表虽已倒序，X 轴仍保持时间正序以免曲线被反向解读
+function scrollChartsToLatest(){{
+  document.querySelectorAll('.chart-scroll').forEach(function(el){{ el.scrollLeft = el.scrollWidth; }});
+}}
+if (document.readyState === 'loading') {{
+  document.addEventListener('DOMContentLoaded', scrollChartsToLatest);
+}} else {{
+  scrollChartsToLatest();
+}}
+window.addEventListener('load', scrollChartsToLatest);
 </script>
 </body></html>"""
 

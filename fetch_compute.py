@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""抓取三指数日K线（动态截止到今天），计算逐年低点/高点主区间（±5% 容忍带）+ 当前位置实时读数。"""
-import urllib.request, json, os, datetime
+"""抓取三指数 + IC/IM 股指期货主力连续 日K线（动态截止到今天），
+计算逐年低点/高点主区间（±5% 容忍带）+ 当前位置实时读数。"""
+import urllib.request, json, os, datetime, re, subprocess
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 ALPHA = 0.05  # ±5% 容忍带
@@ -14,9 +15,59 @@ INDICES = [
     ("科创50",   "000688", "1.000688"),
 ]
 
+# 股指期货「主力连续」：新浪期货接口，代码 IC0 / IM0。
+# 注意：主力连续是把各月主力合约首尾拼接，换月处存在跳空，不是连续可比的价格序列。
+FUTURES = [
+    ("IC主力连续", "IC0", "IC0"),   # 中证500股指期货
+    ("IM主力连续", "IM0", "IM0"),   # 中证1000股指期货
+]
+
 BEG_DASH = f"{BEG[:4]}-{BEG[4:6]}-{BEG[6:]}"   # 2016-01-01
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+# 本地调试可设 AWR_PROXY=http://host:port；GitHub Actions 不设即直连。
+def curl_cmd(url, referer, timeout=20):
+    cmd = ["curl", "-s", "-m", str(timeout), "-A", UA, "-e", referer]
+    proxy = os.environ.get("AWR_PROXY", "").strip()
+    if proxy:
+        cmd += ["--proxy", proxy]
+    cmd.append(url)
+    return cmd
+
+
+def fetch_futures(symbol):
+    """新浪期货「主力连续」日K（IC0 / IM0）。
+    返回与指数同构的按日期升序记录，已过滤到 BEG 之后。
+    数据源限制：主力连续为各月主力合约拼接，换月处价格跳空；
+    IM 于 2022-07-22 上市，IC 数据自 2017-01-17 起。"""
+    url = ("https://stock2.finance.sina.com.cn/futures/api/jsonp.php/"
+           f"var%20_x=/InnerFuturesNewService.getDailyKLine?symbol={symbol}")
+    out = subprocess.run(
+        curl_cmd(url, "https://finance.sina.com.cn/futures/quotes/IC0.shtml", 40),
+        capture_output=True, text=True)
+    txt = (out.stdout or "").strip()
+    m = re.search(r"var _x=\((\[.*\])\);?", txt, re.S)
+    if not m:
+        raise RuntimeError(f"{symbol} 新浪期货响应解析失败: {txt[:80]}")
+    arr = json.loads(m.group(1))
+    if not isinstance(arr, list) or not arr:
+        raise RuntimeError(f"{symbol} 新浪期货无数据")
+    recs = []
+    for r in arr:
+        d = str(r["d"])[:10]
+        if d < BEG_DASH:
+            continue
+        recs.append({
+            "date": d,
+            "open": float(r["o"]),
+            "close": float(r["c"]),
+            "high": float(r["h"]),
+            "low": float(r["l"]),
+        })
+    if not recs:
+        raise RuntimeError(f"{symbol} 新浪期货过滤后为空")
+    return recs
 
 
 def sina_symbol(secid):
@@ -33,7 +84,7 @@ def fetch_sina(secid):
     url = ("https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
            f"CN_MarketData.getKLineData?symbol={sym}&scale=240&ma=no&datalen=4000")
     out = subprocess.run(
-        ["curl", "-s", "-m", "40", "-A", UA, "-e", "https://finance.sina.com.cn/", url],
+        curl_cmd(url, "https://finance.sina.com.cn/", 40),
         capture_output=True, text=True)
     txt = (out.stdout or "").strip()
     if not txt:
@@ -86,8 +137,7 @@ def _fetch_em(secid):
         url = base.format(host=host, secid=secid, beg=BEG, end=END)
         try:
             out = subprocess.run(
-                ["curl", "-s", "-m", "15", "-A", UA,
-                 "-e", "https://quote.eastmoney.com/", url],
+                curl_cmd(url, "https://quote.eastmoney.com/", 15),
                 capture_output=True, text=True, check=True)
             if not out.stdout.strip():
                 raise RuntimeError("空响应")
@@ -185,25 +235,56 @@ def live_position(recs):
         "zone": zone,
     }
 
+def analyze_all(recs):
+    by_year = {}
+    for y in range(2016, TODAY.year + 1):
+        ys, ye = f"{y}-01-01", f"{y}-12-31"
+        yr = [r for r in recs if ys <= r["date"] <= ye]
+        if yr:
+            by_year[str(y)] = analyze_year(yr)
+    return by_year
+
+
 def main():
     result = {"meta": {"alpha": ALPHA, "beg": BEG, "end": END,
                        "gen_date": TODAY.strftime("%Y-%m-%d")}, "indices": {}, "live": {}}
     raw = {}
+
+    # 现货指数：必选，任一失败即中止（报表主体依赖它）
     for name, code, secid in INDICES:
         recs = fetch_daily(secid)
-        by_year = {}
-        for y in range(2016, TODAY.year + 1):
-            ys, ye = f"{y}-01-01", f"{y}-12-31"
-            yr = [r for r in recs if ys <= r["date"] <= ye]
-            if yr:
-                by_year[str(y)] = analyze_year(yr)
-        result["indices"][name] = {"code": code, "secid": secid, "years": by_year}
-        result["live"][name] = live_position(recs)
-        raw[name] = {
-            "code": code, "secid": secid,
-            "series": [{"date": r["date"], "close": r["close"], "high": r["high"], "low": r["low"]} for r in recs]
+        result["indices"][name] = {
+            "code": code, "secid": secid, "kind": "spot",
+            "data_start": recs[0]["date"], "years": analyze_all(recs),
         }
-        print(f"{name}({code}): 抓取 {len(recs)} 条, 覆盖年份 {len(by_year)} 个, 当前位置={result['live'][name]['zone']}")
+        result["live"][name] = live_position(recs)
+        raw[name] = {"code": code, "secid": secid, "kind": "spot", "series": recs}
+        print(f"{name}({code}): 抓取 {len(recs)} 条, 覆盖年份 {len(result['indices'][name]['years'])} 个, "
+              f"当前位置={result['live'][name]['zone']}")
+
+    # 股指期货主力连续：可选，单个失败不阻断主报表（与 ETF 数据同策略）
+    fut_failed = []
+    for name, code, symbol in FUTURES:
+        try:
+            recs = fetch_futures(symbol)
+        except Exception as e:
+            print(f"! {name}({code}) 抓取失败，本次报表跳过该品种: {str(e)[:150]}")
+            fut_failed.append(code)
+            continue
+        result["indices"][name] = {
+            "code": code, "secid": symbol, "kind": "futures",
+            "data_start": recs[0]["date"], "years": analyze_all(recs),
+        }
+        result["live"][name] = live_position(recs)
+        raw[name] = {"code": code, "secid": symbol, "kind": "futures", "series": recs}
+        print(f"{name}({code}): 抓取 {len(recs)} 条, 覆盖年份 {len(result['indices'][name]['years'])} 个, "
+              f"起点 {recs[0]['date']}, 当前位置={result['live'][name]['zone']}")
+
+    if fut_failed:
+        # CI 日志里显式告警，便于发现云端取数被限流（本地只是普通输出）
+        _failed_codes = ",".join(fut_failed)
+        print(f"::warning::股指期货抓取失败 {len(fut_failed)}/{len(FUTURES)} 个 ({_failed_codes})，本次报表已自动隐去这些品种")
+
     out = os.path.join(OUT_DIR, "results.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)

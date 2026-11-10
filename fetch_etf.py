@@ -19,6 +19,15 @@ BEG_DASH = f"{BEG[:4]}-{BEG[4:6]}-{BEG[6:]}"   # 2016-01-01
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
+# 本地调试可设 AWR_PROXY=http://host:port；GitHub Actions 不设即直连。
+def curl_cmd(url, referer, timeout=20):
+    cmd = ["curl", "-s", "-m", str(timeout), "-A", UA, "-e", referer]
+    proxy = os.environ.get("AWR_PROXY", "").strip()
+    if proxy:
+        cmd += ["--proxy", proxy]
+    cmd.append(url)
+    return cmd
+
 
 def sina_symbol(secid):
     """eastmoney secid -> 新浪 symbol：1.510050 -> sh510050, 0.159915 -> sz159915"""
@@ -33,7 +42,7 @@ def fetch_sina(secid):
     url = ("https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
            f"CN_MarketData.getKLineData?symbol={sym}&scale=240&ma=no&datalen=4000")
     out = subprocess.run(
-        ["curl", "-s", "-m", "40", "-A", UA, "-e", "https://finance.sina.com.cn/", url],
+        curl_cmd(url, "https://finance.sina.com.cn/", 40),
         capture_output=True, text=True)
     txt = (out.stdout or "").strip()
     if not txt:
@@ -84,8 +93,7 @@ def _fetch_em(secid):
         url = base.format(host=host, secid=secid, beg=BEG, end=END)
         try:
             out = subprocess.run(
-                ["curl", "-s", "-m", "15", "-A", UA,
-                 "-e", "https://quote.eastmoney.com/", url],
+                curl_cmd(url, "https://quote.eastmoney.com/", 15),
                 capture_output=True, text=True, check=True)
             if not out.stdout.strip():
                 raise RuntimeError("空响应")
