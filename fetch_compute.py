@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """抓取三指数 + IC/IM 股指期货主力连续 日K线（动态截止到今天），
 计算逐年低点/高点主区间（±5% 容忍带）+ 当前位置实时读数。"""
-import urllib.request, json, os, datetime, re, subprocess
+import urllib.request, json, os, datetime, re, subprocess, time
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 ALPHA = 0.05  # ±5% 容忍带
@@ -40,34 +40,49 @@ def fetch_futures(symbol):
     """新浪期货「主力连续」日K（IC0 / IM0）。
     返回与指数同构的按日期升序记录，已过滤到 BEG 之后。
     数据源限制：主力连续为各月主力合约拼接，换月处价格跳空；
-    IM 于 2022-07-22 上市，IC 数据自 2017-01-17 起。"""
-    url = ("https://stock2.finance.sina.com.cn/futures/api/jsonp.php/"
-           f"var%20_x=/InnerFuturesNewService.getDailyKLine?symbol={symbol}")
-    out = subprocess.run(
-        curl_cmd(url, "https://finance.sina.com.cn/futures/quotes/IC0.shtml", 40),
-        capture_output=True, text=True)
-    txt = (out.stdout or "").strip()
-    m = re.search(r"var _x=\((\[.*\])\);?", txt, re.S)
-    if not m:
-        raise RuntimeError(f"{symbol} 新浪期货响应解析失败: {txt[:80]}")
-    arr = json.loads(m.group(1))
-    if not isinstance(arr, list) or not arr:
-        raise RuntimeError(f"{symbol} 新浪期货无数据")
-    recs = []
-    for r in arr:
-        d = str(r["d"])[:10]
-        if d < BEG_DASH:
-            continue
-        recs.append({
-            "date": d,
-            "open": float(r["o"]),
-            "close": float(r["c"]),
-            "high": float(r["h"]),
-            "low": float(r["l"]),
-        })
-    if not recs:
-        raise RuntimeError(f"{symbol} 新浪期货过滤后为空")
-    return recs
+    IM 于 2022-07-22 上市，IC 数据自 2017-01-17 起。
+    GitHub Actions 境外 runner 访问新浪偶发超时/限流（IC0 响应体约为 IM0 的 2.3 倍，
+    最易失败），故做 3 次重试：双域名轮换 + 60s 超时 + 失败原因写入 CI 日志。"""
+    hosts = ("stock2.finance.sina.com.cn", "stock.finance.sina.com.cn")
+    last = ""
+    for attempt in range(3):
+        host = hosts[attempt % len(hosts)]
+        url = (f"https://{host}/futures/api/jsonp.php/"
+               f"var%20_x=/InnerFuturesNewService.getDailyKLine?symbol={symbol}")
+        try:
+            out = subprocess.run(
+                curl_cmd(url, f"https://finance.sina.com.cn/futures/quotes/{symbol}.shtml", 60),
+                capture_output=True, text=True)
+            txt = (out.stdout or "").strip()
+            # 新浪偶尔在 JSONP 前插一段反爬注释，先剥掉再解析
+            txt = re.sub(r"^/\*.*?\*/\s*", "", txt, count=1, flags=re.S)
+            m = re.search(r"var _x=\((\[.*\])\);?", txt, re.S)
+            if not m:
+                raise RuntimeError(f"响应解析失败: {txt[:80]}")
+            arr = json.loads(m.group(1))
+            if not isinstance(arr, list) or not arr:
+                raise RuntimeError("无数据")
+            recs = []
+            for r in arr:
+                d = str(r["d"])[:10]
+                if d < BEG_DASH:
+                    continue
+                recs.append({
+                    "date": d,
+                    "open": float(r["o"]),
+                    "close": float(r["c"]),
+                    "high": float(r["h"]),
+                    "low": float(r["l"]),
+                })
+            if not recs:
+                raise RuntimeError("过滤后为空")
+            return recs
+        except Exception as e:
+            last = f"{type(e).__name__}: {str(e)[:120]}"
+            print(f"  ! {symbol} 第 {attempt+1}/3 次抓取失败 ({host}): {last}")
+            if attempt < 2:
+                time.sleep(4)
+    raise RuntimeError(f"{symbol} 连续 3 次抓取失败，最后原因: {last}")
 
 
 def sina_symbol(secid):
@@ -202,8 +217,9 @@ def analyze_year(recs):
     }
 
 def live_position(recs):
-    """当前位置实时读数：以「年初至今最低收盘」为低点带锚、「年初至今最高收盘」为高点带锚，
-    判断今日收盘落在哪一侧、距带多少%。"""
+    """当前位置实时读数：以「年初至今最低/最高收盘」为锚，
+    计算今日收盘相对年内极值的涨跌幅（%），再按 ±5% 阈值判定所处区间。
+    注意 dist_low / dist_high 是涨跌幅，不是「距某条价格带的距离」。"""
     if not recs:
         return {}
     yr = TODAY.year
@@ -217,8 +233,8 @@ def live_position(recs):
     high_date = next(r["date"] for r in ytd if r["close"] == high_close)
     last = ytd[-1]
     today_close = last["close"]
-    dist_low = (today_close / low_close - 1) * 100       # ≤5% 视为低点带内
-    dist_high = (today_close / high_close - 1) * 100      # ≥-5% 视为高点带内
+    dist_low = (today_close / low_close - 1) * 100       # 较年内最低涨幅，≤5% 判低点带内
+    dist_high = (today_close / high_close - 1) * 100      # 较年内最高跌幅，≥-5% 判高点带内
     if dist_low <= ALPHA * 100:
         zone = "低点带内"
     elif dist_high >= -ALPHA * 100:
