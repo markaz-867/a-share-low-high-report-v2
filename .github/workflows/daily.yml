@@ -36,7 +36,6 @@ jobs:
 
       # ETF 数据仅用于叠加图，属可选数据：抓取失败不应阻断报表生成
       - name: Fetch ETF K-line (optional)
-        id: etf
         continue-on-error: true
         run: |
           for i in $(seq 1 3); do
@@ -54,10 +53,22 @@ jobs:
       - name: Publish Pages artifact (index.html)
         run: cp index_low_high_report.html index.html
 
+      # 与本地 17:00 共用 notify.py：同一份 results.json → live、同一段摘要模板、
+      # 同一个 latest_summary.txt，保证手机消息与线上产物逐字一致。
+      # 未配置 Secret 时 notify.py 只打印 WEBHOOK_NOT_SET，不会让报表任务失败。
+      - name: Build shared summary & push to Feishu / WeCom
+        env:
+          REPORT_WEBHOOK: ${{ secrets.REPORT_WEBHOOK }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+        run: |
+          python notify.py --send --source "云端 17:30" \
+            --state-file .cloud_push_state.json \
+            --write-summary latest_summary.txt
+
       - name: Commit & push updated report
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index_low_high_report.html index.html
+          git add index_low_high_report.html index.html latest_summary.txt .cloud_push_state.json
           git diff --cached --quiet || git commit -m "chore: daily update $(date +%F)"
           git push
