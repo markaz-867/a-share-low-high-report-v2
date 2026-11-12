@@ -7,5 +7,7 @@ etf_data.json
 # Python
 __pycache__/
 *.pyc
+# 本地 webhook 密钥（绝不入库；云端用 GitHub Secret REPORT_WEBHOOK）
+.notify_webhook
 # 历史中间产物（旧缓存 HTML，最终成品为 index_low_high_report.html / index.html）
 index_report_*.html
