@@ -160,6 +160,15 @@ notes = [
     ("  IM 于 2022-07-22 上市、IC 数据自 2017-01-17 起，早年无数据。年度高低点可能受跳空影响。", None),
     ("· 期货含杠杆与升贴水，点位不可与现货指数直接比较；期货不参与 ETF 对照与策略回测。", None),
     ("", None),
+    ("当前位置实时读数 · 口径标注：", Font(bold=True)),
+    ("· 「较年内最低」= (今日收盘 ÷ 年初至今最低收盘 − 1) × 100%，即今天比年内最低那天涨了多少；", None),
+    ("  「较年内最高」= (今日收盘 ÷ 年初至今最高收盘 − 1) × 100%，负数表示距年内最高还差多少。", None),
+    (f"· ±{ALPHA:.0%} 只是判定阈值，不是「离某条价格带还有多远」：较年内最低 ≤5% → 低点带内，", None),
+    ("  较年内最高 ≥-5% → 高点带内，否则中间区；两者同时满足时低点带优先（if/elif 顺序）。", None),
+    ("· 口径为年初至今（YTD）、每年 1 月重置；采用收盘价而非盘中极值；明日创新低即重算，", None),
+    ("  属前瞻代理、非事后高低点，11 月读到 ≤5% 不代表全年底部已确认。", None),
+    ("· 与年度表「低点/高点价格带(±5% 主区间)」不同：后者是围绕年度极值扩展出的连续交易时段。", None),
+    ("", None),
     ("免责声明：本报表仅基于公开行情数据的量化整理，不构成任何投资建议。", Font(bold=True, color="B00020")),
 ]
 for i, (txt, fnt) in enumerate(notes, start=1):
@@ -325,9 +334,10 @@ add_strategy_sheet()
 def add_live_sheet():
     ws = wb.create_sheet("当前位置")
     ws.cell(row=1, column=1, value=f"当前位置实时读数（截至 {RES['meta']['gen_date']}）").font = title_font
-    ws.cell(row=2, column=1, value="以年初至今最低/最高收盘为锚，沿用 ±5% 容忍带；距低点带≤5%为低点带内，距高点带≥-5%为高点带内").font = Font(size=10, color="6F8BAB")
+    ws.cell(row=2, column=1, value="口径：「较年内最低」= (今日收盘 ÷ 年内最低收盘 − 1)×100%，即今天比年内最低涨了多少；5% 只是判定阈值，不是距某条带子的距离。完整标注见本表下方及「说明」sheet。").font = Font(size=10, color="6F8BAB")
+    ws.cell(row=3, column=1, value="判定：较年内最低 ≤5% → 低点带内；较年内最高 ≥-5% → 高点带内；否则中间区（低点带优先）。YTD 口径、收盘价、前瞻代理。").font = Font(size=10, color="6F8BAB")
     hdr = ["指数", "状态", "今日收盘", "今日日期", "年内最低收盘", "最低日", "年内最高收盘", "最高日",
-           "距低点带%", "距高点带%", "低点带阈值(≤5%)", "高点带阈值(≥-5%)"]
+           "较年内最低%", "较年内最高%", "低点带上沿(价)", "高点带下沿(价)"]
     r = 4
     for c, h in enumerate(hdr, 1):
         cell = ws.cell(row=r, column=c, value=h); cell.fill = hdr_fill; cell.font = hdr_font
@@ -341,7 +351,7 @@ def add_live_sheet():
         zfill = PatternFill("solid", fgColor="1EC98B" if zone == "低点带内" else ("FF5B5B" if zone == "高点带内" else "FFD54F"))
         vals = [name, zone, lv["last_close"], lv["last_date"], lv["ytd_low_close"], lv["ytd_low_date"],
                 lv["ytd_high_close"], lv["ytd_high_date"], lv["dist_low_pct"], lv["dist_high_pct"],
-                f"{lv['low_anchor']} (≤{ALPHA*100:.0f}%)", f"{lv['high_anchor']} (≥-{ALPHA*100:.0f}%)"]
+                f"{lv['low_anchor']} (最低+{ALPHA*100:.0f}%)", f"{lv['high_anchor']} (最高-{ALPHA*100:.0f}%)"]
         for c, v in enumerate(vals, 1):
             cell = ws.cell(row=r, column=c, value=v); cell.border = border
             cell.alignment = Alignment(horizontal="center")
@@ -351,6 +361,19 @@ def add_live_sheet():
     widths = [12, 12, 11, 12, 13, 12, 13, 12, 12, 12, 18, 18]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
+
+    r += 1
+    live_notes = [
+        "【口径标注】",
+        "1) 较年内最低 = (今日收盘 ÷ 年初至今最低收盘 − 1) × 100%；较年内最高同法。数值是涨跌幅，不是「距某条价格带的距离」。",
+        f"2) ±{ALPHA:.0%} 为判定阈值：较年内最低 ≤5% 判低点带内；较年内最高 ≥-5% 判高点带内；否则中间区。两者重叠时低点带优先。",
+        "3) 采用收盘价（非盘中极值）、年初至今 YTD 口径、每年 1 月重置；明日创新低即重算。属前瞻代理，非事后高低点确认。",
+        f"4) 低点带上沿 = 年内最低收盘 × {1+ALPHA:.2f}；高点带下沿 = 年内最高收盘 × {1-ALPHA:.2f}，为价格参照。",
+        "5) 与年度表「低点/高点价格带(±5% 主区间)」不同：后者是围绕年度极值扩展出的连续交易时段及其间价格区间。",
+    ]
+    for i, t in enumerate(live_notes):
+        c = ws.cell(row=r + i, column=1, value=t)
+        c.font = Font(bold=(i == 0), size=10, color="6F8BAB")
 
 add_live_sheet()
 
@@ -591,12 +614,12 @@ def live_panel_html():
             continue
         zone = lv["zone"]
         if zone == "低点带内":
-            zc, zt = LOW_COLOR, "处于低点带（距年内最低收盘 ≤5%）"
+            zc, zt = LOW_COLOR, f"处于低点带（较年内最低 ≤{ALPHA*100:.0f}%）"
         elif zone == "高点带内":
-            zc, zt = HIGH_COLOR, "处于高点带（距年内最高收盘 ≥-5%）"
+            zc, zt = HIGH_COLOR, f"处于高点带（较年内最高 ≥-{ALPHA*100:.0f}%）"
         else:
             zc, zt = "#FFD54F", "处于中间区（远离年内极值）"
-        # 距带幅度可读性
+        # 相对年内极值的涨跌幅
         dl = lv["dist_low_pct"]; dh = lv["dist_high_pct"]
         items.append(f"""<div class="live-card">
   <div class="live-name">{name} <span class="code">({RES['indices'][name]['code']})</span></div>
@@ -605,14 +628,21 @@ def live_panel_html():
     <div><span class="k">今日收盘</span><span class="v">{lv['last_close']}</span><span class="d">{lv['last_date']}</span></div>
     <div><span class="k">年内最低收盘</span><span class="v green">{lv['ytd_low_close']}</span><span class="d">{lv['ytd_low_date']}</span></div>
     <div><span class="k">年内最高收盘</span><span class="v red">{lv['ytd_high_close']}</span><span class="d">{lv['ytd_high_date']}</span></div>
-    <div><span class="k">距低点带</span><span class="v">{dl}%</span><span class="d">阈值 ≤{ALPHA*100:.0f}%</span></div>
-    <div><span class="k">距高点带</span><span class="v">{dh}%</span><span class="d">阈值 ≥-{ALPHA*100:.0f}%</span></div>
+    <div><span class="k">较年内最低</span><span class="v">{dl}%</span><span class="d">判低点带 ≤{ALPHA*100:.0f}%</span></div>
+    <div><span class="k">较年内最高</span><span class="v">{dh}%</span><span class="d">判高点带 ≥-{ALPHA*100:.0f}%</span></div>
     <div><span class="k">判断</span><span class="v" style="color:{zc}">{zt}</span></div>
   </div>
 </div>""")
-    disc = ('<p class="live-tip">实时读数说明：以「年初至今最低/最高收盘」为锚，沿用报告 ±5% 容忍带。'
-            '今日收盘距年内最低收盘 ≤5% → 低点带内（可结合估值分位/情绪冰点分批建仓）；'
-            '距年内最高收盘 ≥-5% → 高点带内（可分批止盈）。此为前瞻代理，非事后高低点。</p>')
+    disc = (
+        '<p class="live-tip"><b>口径标注：</b>「较年内最低」= (今日收盘 ÷ 年初至今最低收盘 − 1) × 100%，'
+        '即<b>今天比年内最低那天涨了多少</b>；「较年内最高」同法，负数表示距年内最高还差多少。'
+        '<b>±5% 只是判定阈值，不是「离某条价格带还有多远」</b>。</p>'
+        '<p class="live-tip"><b>判定：</b>较年内最低 ≤5% → 低点带内（可结合估值分位/情绪冰点分批建仓）；'
+        '较年内最高 ≥-5% → 高点带内（可分批止盈）；否则中间区。两者同时满足时<b>低点带优先</b>。</p>'
+        '<p class="live-tip"><b>三个注意：</b>① 用<b>收盘价</b>，非盘中极值；② 口径为<b>年初至今（YTD）</b>，'
+        '每年 1 月重置，明日创新低即重算；③ 这是<b>前瞻代理、非事后高低点</b>，11 月读到 ≤5% 不代表全年底部已确认。'
+        '另：与年度表「低点/高点价格带(±5% 主区间)」<b>是两个不同概念</b>——后者是围绕年度极值的一段连续交易时段。</p>'
+    )
     return f'<div class="live-panel"><h2>当前位置实时读数（截至 {RES["meta"]["gen_date"]}）</h2>{disc}<div class="live-row">{"".join(items)}</div></div>'
 
 live_panel = live_panel_html()
@@ -883,7 +913,8 @@ footer b{{color:#ff8a8a}}
 .overlay-sec svg{{display:block;background:#0c2238;border-radius:8px;border:1px solid #1c3a5e;margin:4px 0 6px}}
 .live-panel{{background:#0e2438;border:1px solid #1c3a5e;border-radius:12px;padding:16px 18px 18px;margin:16px 0 8px;box-shadow:0 4px 18px rgba(0,0,0,.25)}}
 .live-panel h2{{margin:0 0 8px;font-size:17px;color:#fff}}
-.live-tip{{color:#8fa8c4;font-size:12px;margin:0 0 12px;line-height:1.6}}
+.live-tip{{color:#8fa8c4;font-size:12px;margin:0 0 8px;line-height:1.65}}
+.live-tip b{{color:#d3e6fa;font-weight:600}}
 .live-row{{display:flex;flex-wrap:wrap;gap:14px}}
 .live-card{{flex:1;min-width:260px;background:#102a43;border:1px solid #1c3a5e;border-radius:10px;padding:12px 14px}}
 .live-name{{font-size:14px;color:#fff;font-weight:600}}
@@ -923,6 +954,7 @@ footer b{{color:#ff8a8a}}
 <footer>
 <p><b>方法说明：</b>年度最低/最高 = 全年每日最低/最高价极值；低点区间 = 以年最低点交易日为锚向两侧扩展至收盘价突破 年最低×1.05 的连续时段，取起止日期与期间价格带；高点区间对称(阈值 年最高×0.95)。仅取主区间。</p>
 <p><b>价格带浮动%：</b>低点带浮动%=(低点带上沿−下沿)/下沿；高点带浮动%=(高点带上沿−下沿)/下沿；低→高上涨%区间=(高点带中点−低点带中点)/低点带中点。</p>
+<p><b>当前位置口径标注：</b>「较年内最低」=(今日收盘÷年初至今最低收盘−1)×100%，「较年内最高」同法计算；±5% 仅为判定阈值，不是「距某条价格带还有多远」。采用收盘价、YTD 口径（每年 1 月重置），明日创新低即重算，属前瞻代理、非事后高低点确认；低点带判定优先。此口径与年度表「±5% 主区间价格带」为两个不同概念。</p>
 <p><b>期货口径提示：</b>IC/IM 采用新浪「主力连续」合约日K，由各月主力合约首尾拼接而成，换月当日的价格跳空属于拼接特征、非真实涨跌；IM 上市于 2022-07-22，IC 数据自 2017-01-17 起，此前年份空缺。期货为保证金交易且存在升贴水，其点位与现货指数不可直接类比；本报表对期货沿用同一 ±5% 主区间法，结果仅作形态观察，不适合直接作为交易依据。</p>
 <p><b>免责声明：</b>本报表仅基于公开行情数据的量化整理，不构成任何投资建议。市场有风险，决策需谨慎。</p>
 </footer>
