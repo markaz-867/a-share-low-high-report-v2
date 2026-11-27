@@ -45,6 +45,13 @@ CALIBER = (
 )
 TIMEOUT = 20
 
+# 重点变化检测：与 C2C 日更共用 changes.py，同源重算上一交易日、不手写数字。
+try:
+    from changes import detect_changes, format_changes
+except ImportError:
+    detect_changes = None  # type: ignore[assignment]
+    format_changes = None  # type: ignore[assignment]
+
 
 def load_results(results_path: Path) -> dict:
     with results_path.open(encoding="utf-8") as fh:
@@ -66,13 +73,21 @@ def pct(value) -> str:
     return f"{float(value):+.2f}%"
 
 
-def build_summary(data: dict) -> str:
+def build_summary(data: dict, raw: dict | None = None) -> str:
     """唯一的摘要模板。两边都调用它，正文不含来源标签，便于逐字比对。"""
     live = data["live"]
     gen_date = (data.get("meta") or {}).get("gen_date", "未知")
     dates = sorted({str(live[n]["last_date"]) for n in EXPECTED})
     date_desc = dates[0] if len(dates) == 1 else f"{dates[0]} ~ {dates[-1]}"
     lines = [f"【A股高低点报表】生成 {gen_date} · 数据截止 {date_desc}", ""]
+    # 重点变化置顶：同源重算上一交易日，三类变化（±2% / 区间切换 / 创年内极值）。
+    # raw 缺失或检测异常时降级显示「不可用」，绝不阻断主摘要生成。
+    if raw is not None and detect_changes is not None and format_changes is not None:
+        try:
+            changes = detect_changes(data, raw)
+            lines += [format_changes(changes), ""]
+        except Exception as exc:  # noqa: BLE001 - 检测失败不阻断主流程
+            lines += ["重点变化：检测暂不可用（同源重算异常，完整读数见下）", ""]
     for name in EXPECTED:
         rec = live[name]
         lines.append(
@@ -189,7 +204,12 @@ def main() -> int:
 
     try:
         data = load_results(resolve(args.results))
-        summary = build_summary(data)
+        raw = None
+        raw_path = resolve("raw_data.json")
+        if raw_path.exists():
+            with raw_path.open(encoding="utf-8") as fh:
+                raw = json.load(fh)
+        summary = build_summary(data, raw)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"NOTIFY_FAIL 读取/校验 results.json 失败：{exc}", file=sys.stderr)
         return 1
